@@ -1,0 +1,292 @@
+<?php
+
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Origin, Content-Type, Accept, Authorization, X-Request-With');
+header('Access-Control-Allow-Credentials: true');
+header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+error_reporting(~E_NOTICE);
+@ini_set('display_errors', '1'); //ไม่แสดงerror
+
+
+try {
+
+    include '../connect.php';
+    include '../basic_data.php';
+} catch (Exception $e) {
+    echo 'Message: ' . $e->getMessage();
+}
+
+//if ($_SERVER['REQUEST_METHOD'] === "REQUEST") { check session 
+
+$act = $_POST['act'];
+$reg = $_POST['reg'];
+
+//input weight from user 
+$w_age = $_REQUEST['w_age'];
+$w_leak = $_REQUEST['w_leak'];
+$w_cost = $_REQUEST['w_cost'];
+$w_elev = $_REQUEST['w_elev'];
+$w_ptype = $_REQUEST['w_ptype'];
+$w_pressure = $_REQUEST['w_pressure'];
+$w_type = $_REQUEST['w_type'];
+$w_branch = $_REQUEST['w_branch'];
+$w_dma = $_REQUEST['w_dma'];
+
+//input for pipe project save 
+$proj_fiscal = $_POST['proj_fiscal'];
+$proj_budget = $_POST['proj_budget'];
+$proj_name = $_POST['proj_name'];
+$proj_remark = $_POST['proj_remark'];
+$project_prov_id = $_POST['proj_prov_id'];
+
+$data = array();
+$data['status'] = 'true';
+$data['message'] = 'start API';
+
+$leak_data = get_leak_summary($pwa_code, $connection);
+$cost_data = get_repair_summary($pwa_code, $connection);
+
+//$project_prov_name =iconv( "utf-8", "windows-874",$_POST['project_prov_name']);
+//$remark =iconv( "utf-8", "windows-874",$_POST['remark']);
+
+if ($act == "group_project_weight") {
+    $group_project_weight = array();
+    $q_project_weight = " SET CLIENT_ENCODING TO 'utf-8'; 
+                            SELECT imp.zone, imp.pwa_code, imp.project_prov_id, imp.project_prov_name, SUM(imp.pipe_long) AS sum_long, imp.proj_cost, 
+                            imp.remark, imp.uid_insert, imp.approve_status, 
+            ROUND(SUM(imp.sum_ww)/COUNT(*),2) AS avg_ww FROM 
+        (SELECT pm.zone, pm.pwa_code, pm.project_prov_name, pipe_id, pipe_type, pipe_size, pipe_long, pm.proj_cost, pm.project_prov_id, 
+                            pm.remark, pm.uid_insert, rm.approve_status, 
+                            ({$w_leak} * (CASE WHEN SUM(c_leak) < ls.leak_value1 THEN 1 
+                                    WHEN  SUM(c_leak) >= ls.leak_value1
+                                            AND SUM(c_leak) <= ls.leak_value2  THEN 2
+                                    WHEN  SUM(c_leak) > ls.leak_value2  THEN 3 END)) 
+                                    + ({$w_cost} * (CASE WHEN SUM(cost_repair) < cs.cost_value1 THEN 1
+                                    WHEN  SUM(cost_repair) >= cs.cost_value1
+                                    AND  SUM(cost_repair) <= cs.cost_value2 THEN 2
+                                    WHEN  SUM(cost_repair) > cs.cost_value2 THEN 3 
+                                    ELSE 0 END)) 
+                                    + ({$w_age} * (CASE WHEN  pipe_age < {$age_data['value_1']} THEN 1 
+                                                            WHEN pipe_age >= {$age_data['value_1']}
+                                                            AND pipe_age <= {$age_data['value_2']} THEN 2 
+                                                            WHEN  pipe_age >  {$age_data['value_2']} THEN 3 
+                                                            ELSE 0 END)) 
+                                    + ({$w_ptype} * (CASE WHEN pipe_type IN ('ST', 'ST_UN', 'ST_ON', 'ST_CV', 'GS', 'DI', 'CI') THEN 1 
+                                        WHEN pipe_type IN ('PVC', 'PVC_O', 'HDPE', 'PB', 'GRP') THEN 2 
+                                        WHEN pipe_type = 'AC' THEN 3 ELSE 1 END)) +  
+                                        ({$w_branch} * r_score 
+                                        +({$w_dma} * (CASE WHEN dma_nrw <= 30 THEN 1 
+                                                    WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
+                                                    WHEN dma_nrw > 40 THEN 3 ELSE 0 END)) ) sum_ww
+                            FROM dssnrw.pipe_improve pm
+                            LEFT JOIN 
+                            dssnrw.ref_pipe_improve rm 
+                            ON pm.project_prov_id = rm.project_prov_id 
+                            LEFT JOIN 
+                            dssnrw.leakdata_summary ls 
+                            ON pm.pwa_code = ls.pwa_code 
+                            LEFT JOIN 
+                            dssnrw.costdata_summary cs 
+                            ON pm.pwa_code = cs.pwa_code 
+                            WHERE pm.fiscal_year = '{$proj_fiscal}' AND pm.budget_type = '{$proj_budget}'    
+                            GROUP BY pm.zone, pm.pwa_code, pm.project_prov_name, pm.project_prov_id, pipe_id, pipe_type, pipe_size, 
+                            pipe_long, pipe_age, r_score, dma_nrw, pm.proj_cost, pm.remark, pm.uid_insert, ls.leak_value1, ls.leak_value2, 
+                            cs.cost_value1, cs.cost_value2, rm.approve_status
+                            ORDER BY pm.zone::INTEGER, pm.pwa_code, pm.project_prov_name, pm.project_prov_id, pipe_id, pipe_type, pipe_size ) imp 
+							GROUP BY imp.zone, imp.pwa_code, imp.project_prov_id, imp.project_prov_name, imp.proj_cost, imp.remark, imp.uid_insert, imp.approve_status  ";
+
+    //echo $q_project_weight;
+    //exit();
+
+    $result = pg_exec($connection,  $q_project_weight);
+
+    $numrows = pg_numrows($result);
+
+    if (!$result || $numrows == 0) {
+        $data['status'] = 'false';
+        $data['message'] = 'Project name not in database.';
+    } else {
+
+        $data['status'] = 'true';
+        $data['message'] = 'complete for get project name.';
+
+
+        for ($ri = 0; $ri < $numrows; $ri++) {
+            $row = pg_fetch_array($result, $ri);
+
+            array_push($group_project_weight, array(
+                'zone' => $row['zone'],
+                'pwa_code' => $row['pwa_code'],
+                'proj_prov_id' => $row['project_prov_id'], 
+                'proj_name' => $row['project_prov_name'],
+                'sum_long' => $row['sum_long'],
+                'proj_cost' => $row['proj_cost'],
+                'proj_remark' => $row['remark'],
+                'uid_insert' => $row['uid_insert'],
+                'avg_ww' => $row['avg_ww'],
+                'approve_status' => $row['approve_status'],
+            ));
+        }
+    }
+
+    $data['group_project_weight'] = $group_project_weight;
+    $data['message'] = 'Complete for get project and weight.';
+}
+
+if ($act == "group_pipetype_weight") {
+    $group_pipetype_weight = array();
+
+    $q_pipe_type_weight = "  SET CLIENT_ENCODING TO 'utf-8'; 
+                             SELECT imp.zone, imp.pwa_code, imp.project_prov_id, imp.project_prov_name, SUM(imp.pipe_long) AS sum_long, imp.pipe_type, imp.pipe_size, 
+                             imp.remark, imp.uid_insert,  
+                    ROUND(CAST(SUM(imp.sum_ww)/COUNT(*) AS numeric), 2) AS avg_ww FROM 
+                (SELECT pm.zone, pm.pwa_code, project_prov_name, pipe_id, pipe_type, pipe_size, pipe_long, proj_cost, project_prov_id, 
+                remark, uid_insert,  
+                                    ({$w_leak} * (CASE WHEN SUM(c_leak) < ls.leak_value1 THEN 1 
+                                            WHEN  SUM(c_leak) >= ls.leak_value1
+                                                    AND SUM(c_leak) <= ls.leak_value2  THEN 2
+                                            WHEN  SUM(c_leak) > ls.leak_value2  THEN 3 END)) 
+                                            + ({$w_cost} * (CASE WHEN SUM(cost_repair) <  cs.cost_value1 THEN 1
+                                            WHEN  SUM(cost_repair) >=  cs.cost_value1
+                                            AND  SUM(cost_repair) <=  cs.cost_value2 THEN 2
+                                            WHEN  SUM(cost_repair) >  cs.cost_value2 THEN 3 
+                                            ELSE 0 END)) 
+                                            + ({$w_age} * (CASE WHEN  pipe_age < {$age_data['value_1']} THEN 1 
+                                                                    WHEN pipe_age >= {$age_data['value_1']}
+                                                                    AND pipe_age <= {$age_data['value_2']} THEN 2 
+                                                                    WHEN  pipe_age >  {$age_data['value_2']} THEN 3 
+                                                                    ELSE 0 END)) 
+                                            + ({$w_ptype} * (CASE WHEN pipe_type IN ('ST', 'ST_UN', 'ST_ON', 'ST_CV', 'GS', 'DI', 'CI') THEN 1 
+                                                WHEN pipe_type IN ('PVC', 'PVC_O', 'HDPE', 'PB', 'GRP') THEN 2 
+                                                WHEN pipe_type = 'AC' THEN 3 ELSE 1 END)) +  
+                                                ({$w_branch} * r_score 
+                                                +({$w_dma} * (CASE WHEN dma_nrw <= 30 THEN 1 
+                                                            WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
+                                                            WHEN dma_nrw > 40 THEN 3 ELSE 0 END)) ) sum_ww
+                                    FROM dssnrw.pipe_improve pm
+                                    LEFT JOIN 
+                                        dssnrw.leakdata_summary ls 
+                                        ON pm.pwa_code = ls.pwa_code 
+                                        LEFT JOIN 
+                                        dssnrw.costdata_summary cs 
+                                        ON pm.pwa_code = cs.pwa_code 
+                                    WHERE fiscal_year = '{$proj_fiscal}' AND budget_type = '{$proj_budget}'  
+                        GROUP BY pm.zone, pm.pwa_code, project_prov_name, project_prov_id, pipe_id, pipe_type, pipe_size, 
+                            pipe_long, pipe_age, r_score, dma_nrw, proj_cost, remark, uid_insert, ls.leak_value1, ls.leak_value2, cs.cost_value1, cs.cost_value2  
+                                    ORDER BY pm.zone::INTEGER, pm.pwa_code, project_prov_name, project_prov_id, pipe_id, pipe_type, pipe_size ) imp 
+                                                    GROUP BY imp.zone, imp.pwa_code, imp.project_prov_id, imp.project_prov_name, imp.pipe_type, imp.pipe_size, imp.remark, imp.uid_insert 
+                                                    ORDER BY imp.zone, imp.pwa_code, imp.project_prov_id, imp.project_prov_name, imp.pipe_type, imp.pipe_size     " ;
+
+    $result = pg_exec($connection, $q_pipe_type_weight);
+
+    $numrows = pg_numrows($result);
+
+    if (!$result || $numrows == 0) {
+        $data['status'] = 'false';
+        $data['message'] = 'pipetype in project name not in database.';
+    } else {
+
+        $data['status'] = 'true';
+        $data['message'] = 'complete for get pipetype.';
+
+        for ($ri = 0; $ri < $numrows; $ri++) {
+            $row = pg_fetch_array($result, $ri);
+
+            array_push($group_pipetype_weight, array(
+                'zone' => $row['zone'],
+                'pwa_code' => $row['pwa_code'],
+                'proj_prov_id' => $row['project_prov_id'], 
+                'proj_name' => $row['project_prov_name'],
+                'sum_long' => $row['sum_long'],
+                'pipe_type' => $row['pipe_type'],
+                'pipe_size' => $row['pipe_size'],
+                'proj_remark' => $row['remark'],
+                'uid_insert' => $row['uid_insert'],
+                'avg_ww' => $row['avg_ww'],
+            ));
+        }
+    }
+    $data['group_pipetype_weight'] = $group_pipetype_weight;
+    $data['message'] = 'Complete for get pipe_type and weight.';
+}
+
+if ($act == "group_pipeid_weight") {
+    $group_pipeid_weight = array();
+
+    $q_pipe_id_weight = " SET CLIENT_ENCODING TO 'utf-8'; 
+                        SELECT pm.zone, pm.pwa_code, project_prov_id, project_prov_name, pipe_id, pipe_type, pipe_size, pipe_long, 
+                        remark, uid_insert, 
+                    ({$w_leak} * (CASE WHEN SUM(c_leak) < ls.leak_value1 THEN 1 
+                            WHEN  SUM(c_leak) >= ls.leak_value1
+                                    AND SUM(c_leak) <= ls.leak_value2 THEN 2
+                            WHEN  SUM(c_leak) > ls.leak_value2  THEN 3 END)) 
+                            + ({$w_cost} * (CASE WHEN SUM(cost_repair) < cs.cost_value1 THEN 1
+                            WHEN  SUM(cost_repair) >= cs.cost_value1 
+                            AND  SUM(cost_repair) <= cs.cost_value2 THEN 2
+                            WHEN  SUM(cost_repair) > cs.cost_value2 THEN 3 
+                            ELSE 0 END)) 
+                            + ({$w_age} * (CASE WHEN  pipe_age < {$age_data['value_1']} THEN 1 
+                                                    WHEN pipe_age >= {$age_data['value_1']}
+                                                    AND pipe_age <= {$age_data['value_2']} THEN 2 
+                                                    WHEN  pipe_age >  {$age_data['value_2']} THEN 3 
+                                                    ELSE 0 END)) 
+                            + ({$w_ptype} * (CASE WHEN pipe_type IN ('ST', 'ST_UN', 'ST_ON', 'ST_CV', 'GS', 'DI', 'CI') THEN 1 
+                                WHEN pipe_type IN ('PVC', 'PVC_O', 'HDPE', 'PB', 'GRP') THEN 2 
+                                WHEN pipe_type = 'AC' THEN 3 ELSE 1 END)) +  
+                                ({$w_branch} * r_score 
+                                +({$w_dma} * (CASE WHEN dma_nrw <= 30 THEN 1 
+                                            WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
+                                            WHEN dma_nrw > 40 THEN 3 ELSE 0 END)) ) sum_ww
+                    FROM dssnrw.pipe_improve pm 
+                    LEFT JOIN 
+                        dssnrw.leakdata_summary ls 
+                        ON pm.pwa_code = ls.pwa_code 
+                        LEFT JOIN 
+                        dssnrw.costdata_summary cs 
+                        ON pm.pwa_code = cs.pwa_code 
+                    WHERE fiscal_year = '{$proj_fiscal}' AND budget_type = '{$proj_budget}'  
+		        GROUP BY pm.zone, pm.pwa_code, project_prov_name, project_prov_id, pipe_id, pipe_type, 
+                                pipe_size, pipe_long, pipe_age, r_score, dma_nrw, remark, uid_insert,
+                                ls.leak_value1, ls.leak_value2, cs.cost_value1, cs.cost_value2   
+                    ORDER BY pm.zone::INTEGER, pm.pwa_code, project_prov_name, project_prov_id, pipe_id, pipe_type, pipe_size   ";
+
+    $result = pg_exec($connection, $q_pipe_id_weight);
+
+    $numrows = pg_numrows($result);
+
+    if (!$result || $numrows == 0) {
+        $data['status'] = 'false';
+        $data['message'] = 'pipe_id in project name not in database.';
+    } else {
+
+        $data['status'] = 'true';
+        $data['message'] = 'complete for get pipe_id.';
+
+        for ($ri = 0; $ri < $numrows; $ri++) {
+            $row = pg_fetch_array($result, $ri);
+
+            array_push($group_pipeid_weight, array(
+                'zone' => $row['zone'],
+                'pwa_code' => $row['pwa_code'],
+                'proj_prov_id' => $row['project_prov_id'], 
+                'proj_name' => $row['project_prov_name'],
+                'pipe_id' => $row['pipe_id'],
+                'pipe_type' => $row['pipe_type'],
+                'pipe_size' => $row['pipe_size'],
+                'pipe_long' => $row['pipe_long'],
+                'proj_remark' => $row['remark'],
+                'uid_insert' => $row['uid_insert'],
+                'sum_ww' => $row['sum_ww'],
+            ));
+        }
+    }
+
+    $data['group_pipeid_weight'] = $group_pipeid_weight;
+    $data['message'] = 'Complete for get pipe_id and weight.';
+}
+
+echo json_encode($data);
+pg_close($connection);
+//}
