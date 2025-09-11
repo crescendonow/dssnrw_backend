@@ -1430,7 +1430,7 @@ if ($act == 'f_weight') {
                                 pp.contrac_date, 
                                 CASE WHEN pp.asset_code IS NULL THEN '' ELSE pp.asset_code END asset_code, 
                                 pp.pipe_func, pp.laying, pp.product, pp.depth, pp.locate, pp.wkb_geometry, ps.dma_no, ps.dma_name  
-                        FROM oracle.r{$zone}_pipe pp LEFT JOIN oracle.r{$zone}_leakpoint l ON ST_Intersects(l.gen_geometry, pp.gen_geometry)
+                        FROM oracle.r{$zone}_pipe pp LEFT JOIN dssnrw_leak.r{$zone}_leakpoint l ON ST_Intersects(l.gen_geometry, pp.gen_geometry)
                         WHERE pp.pwa_code = '{$pwa_code}' AND pp.wkb_geometry IS NOT NULL
                         AND pp.pipe_id IN ({$pipe_id_form})
                         GROUP BY pp.pipe_id, pp.pipe_type, pp.pipe_size, pp.yearinstall, pp.pipe_long,
@@ -1501,7 +1501,7 @@ if ($act == 'f_weight') {
                                 FROM dssnrw.p_temp_{$pwa_code} pt
                         LEFT JOIN 
                         (SELECT leak_id, leak_no, repaircost, pwa_code, wkb_geometry, gen_geometry 
-                            FROM oracle.r{$zone}_leakpoint ) lk 
+                            FROM dssnrw_leak.r{$zone}_leakpoint ) lk 
                             ON ST_Intersects(lk.gen_geometry, pt.gen_geometry)
                         LEFT JOIN 
                         (SELECT pipe_id, c_leak, cost_repair, pwa_code, wkb_geometry
@@ -1614,7 +1614,7 @@ if ($act == 'f_weight') {
                             (SELECT pwa_code, r_score FROM dssnrw.pwa_risk_group) rg
                             ON ps.pwa_code = rg.pwa_code 
                             LEFT JOIN 
-                            (SELECT leak_id, leak_no, pwa_code, wkb_geometry, gen_geometry FROM oracle.r{$zone}_leakpoint 
+                            (SELECT leak_id, leak_no, pwa_code, wkb_geometry, gen_geometry FROM dssnrw_leak.r{$zone}_leakpoint 
                                 WHERE pwa_code = '{$pwa_code}' ) lk  
                             ON ST_Intersects(lk.gen_geometry, pt.gen_geometry)
                             GROUP BY pipe_type, pipe_size,pipe_age, cost_repair, rg.r_score, dma_nrw
@@ -1724,12 +1724,12 @@ if ($act == 'f_weight') {
                             leak_no,
                             pwa_code,
                             wkb_geometry,
-                            gen_geometry FROM oracle.r{$zone}_leakpoint WHERE pwa_code='{$pwa_code}}' ) lk 
+                            gen_geometry FROM dssnrw_leak.r{$zone}_leakpoint WHERE pwa_code='{$pwa_code}}' ) lk 
                                 ON ST_Intersects(lk.gen_geometry, pt.gen_geometry)
                             ) sw  ";
 
     //echo $sqlGroupWeight_temp;
-    //exit();
+    //exit();0
 
 
 
