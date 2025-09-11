@@ -463,15 +463,15 @@ if ($act == 'upload_excel') {
                 , ST_AsGeoJSON(lg.wkb_geometry)::json As geometry 
                 , row_to_json((SELECT l FROM (SELECT pipe_id, project_no, pipe_type, pipe_size, 
                         yearinstall, pipe_long, contrac_date, asset_code, pipe_func, laying, 
-                        product, depth, locate, c_leak, cost_repair, dma_name) As l 
+                        product, depth, locate, c_leak, cost_repair, dma_name, dma_no_list, dma_name_list) As l 
                 )) As properties 
                 FROM (select pp.pipe_id, pp.project_no, pp.pipe_type, pp.pipe_size, pp.yearinstall, pp.pipe_long, pp.contrac_date, 
                         CASE WHEN pp.asset_code IS NULL THEN '' ELSE pp.asset_code END asset_code, 
-                        pp.pipe_func, pp.laying, pp.product, pp.depth, pp.locate, pp.wkb_geometry,
-                                            ps.c_leak, ps.cost_repair,ps.dma_name 
+                        pp.pipe_func, pp.laying, pp.product, pp.depth, pp.locate, ps.dma_no_list, ps.dma_name_list,
+                        pp.wkb_geometry, ps.c_leak, ps.cost_repair,ps.dma_name 
                         FROM oracle.r{$zone}_pipe pp 
                                             LEFT JOIN 
-                                            (SELECT c_leak, cost_repair, pipe_id, pwa_code, dma_name FROM dssnrw.pipe_summary 
+                                            (SELECT c_leak, cost_repair, pipe_id, pwa_code, dma_name, dma_no_list, dma_name_list FROM dssnrw.pipe_summary 
                                                 WHERE pwa_code = '{$pwa_code}' ) ps
                                             ON pp.pwa_code = ps.pwa_code AND pp.pipe_id = ps.pipe_id 
                         WHERE pp.pwa_code = '{$pwa_code}' 
@@ -626,11 +626,12 @@ if ($act == 'pipe_detail_map') {
         //conclusion pipe freq dma 
         $sqlPipetypesizefreq_dma =  "SET CLIENT_ENCODING TO 'utf-8';
                                     SELECT 
-                                        CASE 
-                                            WHEN SUM(pp.l_pipe) != 0 
-                                                THEN ROUND(SUM(pp.c_leak) / SUM(pp.l_pipe), 2) 
-                                            ELSE 0 
-                                        END AS avg_lk,
+                                        COALESCE(
+                                        ROUND(
+                                        (SUM(pp.c_leak)::numeric) 
+                                        / NULLIF(SUM(pp.l_pipe)::numeric, 0)
+                                        , 2)
+                                    , 0)                               AS avg_lk, 
                                         pp.dma_no,
                                         pp.dma_name,
                                         pp.pipe_type,
@@ -646,16 +647,11 @@ if ($act == 'pipe_detail_map') {
                                         MAX(pp.pressure) AS pressure
                                     FROM (
                                         SELECT 
-                                            CASE 
-                                                WHEN SUM(pipe_long) != 0 
-                                                    THEN ROUND(SUM(c_leak) / SUM(pipe_long), 2) 
-                                                ELSE 0 
-                                            END AS avg_lk,
                                             pipe_type,
                                             pipe_size,
                                             pipe_age,
                                             COUNT(pipe_id)    AS c_pipe,
-                                            SUM(pipe_long)    AS l_pipe,
+                                            SUM(ST_Length(wkb_geometry::geography)) AS l_pipe, 
                                             SUM(c_leak)       AS c_leak,
                                             0                 AS ptype,
                                             0                 AS pressure,
@@ -759,15 +755,16 @@ if ($act == 'pipe_detail_map') {
                 , ST_AsGeoJSON(lg.wkb_geometry)::json As geometry 
                 , row_to_json((SELECT l FROM (SELECT pipe_id, project_no, pipe_type, pipe_size, 
                         yearinstall, pipe_long, contrac_date, asset_code, pipe_func, laying, 
-                        product, depth, locate, c_leak, cost_repair, dma_no, dma_name) As l 
+                        product, depth, locate, c_leak, cost_repair, dma_no, dma_name, dma_no_list, dma_name_list) As l 
                 )) As properties 
                 FROM (select pp.pipe_id, pp.project_no, pp.pipe_type, pp.pipe_size, pp.yearinstall, pp.pipe_long, pp.contrac_date, 
                         CASE WHEN pp.asset_code IS NULL THEN '' ELSE pp.asset_code END asset_code, 
                         pp.pipe_func, pp.laying, pp.product, pp.depth, pp.locate, pp.wkb_geometry,
-                                            ps.c_leak, ps.cost_repair, ps.dma_no, ps.dma_name   
+                                            ps.c_leak, ps.cost_repair, ps.dma_no, ps.dma_name, ps.dma_no_list, ps.dma_name_list  
                         FROM oracle.r{$zone}_pipe pp 
                                             LEFT JOIN 
-                                            (SELECT c_leak, cost_repair, pipe_id, pwa_code, dma_no, dma_name FROM dssnrw.pipe_summary 
+                                            (SELECT c_leak, cost_repair, pipe_id, pwa_code, dma_no, dma_name,  dma_no_list, dma_name_list 
+                                            FROM dssnrw.pipe_summary 
                                                 WHERE pwa_code = '{$pwa_code}' ) ps
                                             ON pp.pwa_code = ps.pwa_code AND pp.pipe_id = ps.pipe_id 
                         WHERE pp.pwa_code = '{$pwa_code}' 
@@ -1041,203 +1038,204 @@ if ($act == 'f_weight') {
     //typesize_dma
     $sqlPipetypesizefreq_dma =  " SET CLIENT_ENCODING TO 'utf-8';
 
-                                WITH pp AS (
-                                SELECT
-                                    CASE WHEN SUM(pipe_long) <> 0
-                                        THEN ROUND(SUM(c_leak) / SUM(pipe_long), 2)
-                                        ELSE 0
-                                    END AS avg_lk,
+                                    WITH pp AS (
+                                    SELECT
+                                        COALESCE(
+                                        ROUND( (SUM(c_leak)::numeric) / NULLIF(SUM(ST_Length(ps.wkb_geometry::geography))::numeric, 0), 2 ),
+                                        0
+                                        ) AS avg_lk,
 
-                                    pipe_type,
-                                    pipe_size,
-                                    pipe_age,
+                                        pipe_type,
+                                        pipe_size,
+                                        pipe_age,
 
-                                    dma_no,
-                                    dma_name,
+                                        dma_no,
+                                        dma_name,
 
-                                    {$w_age} AS w_age,
+                                        {$w_age} AS w_age,
 
-                                    {$w_age} * (
-                                        CASE
-                                        WHEN pipe_age < {$age_data['value_1']} THEN 1
-                                        WHEN pipe_age BETWEEN {$age_data['value_1']} AND {$age_data['value_2']} THEN 2
-                                        WHEN pipe_age > {$age_data['value_2']} THEN 3
-                                        ELSE 0
-                                        END
-                                    ) AS pipe_age_ww,
-
-                                    COUNT(pipe_id)   AS c_pipe,
-                                    SUM(pipe_long)   AS l_pipe,
-                                    SUM(c_leak)      AS c_leak,
-
-                                    {$w_leak}             AS w_leak,
-                                    {$w_leak} * (
-                                        CASE
-                                        WHEN SUM(c_leak) < {$leak_data['value_1']} THEN 1
-                                        WHEN SUM(c_leak) BETWEEN {$leak_data['value_1']} AND {$leak_data['value_2']} THEN 2
-                                        WHEN SUM(c_leak) > {$leak_data['value_2']} THEN 3
-                                        END
-                                    ) AS c_leak_ww,
-
-                                    SUM(cost_repair) AS cost_repair,
-
-                                    {$w_cost}   AS w_cost,
-                                    {$w_cost} * (
-                                        CASE
-                                        WHEN SUM(cost_repair) < {$cost_data['value_1']} THEN 1
-                                        WHEN SUM(cost_repair) BETWEEN {$cost_data['value_1']} AND {$cost_data['value_2']} THEN 2
-                                        WHEN SUM(cost_repair) > {$cost_data['value_2']} THEN 3
-                                        ELSE 0
-                                        END
-                                    ) AS cost_repair_ww,
-
-                                    0 AS elev,
-                                    0 AS w_elev,
-                                    0 AS elev_ww,
-
-                                    0     AS ptype,
-                                    {$w_ptype}  AS w_ptype,
-                                    {$w_ptype} * (
-                                        CASE
-                                        WHEN pipe_type IN ('ST','ST_UN','ST_ON','ST_CV','GS','DI','CI') THEN 1
-                                        WHEN pipe_type IN ('PVC','PVC_O','HDPE','PB')              THEN 2
-                                        WHEN pipe_type IN ('AC', 'GRP')                            THEN 3
-                                        ELSE 1
-                                        END
-                                    ) AS ptype_ww,
-
-                                    0 AS pressure,
-                                    0 AS w_pressure,
-                                    0 AS pressure_ww,
-
-                                    {$w_branch} AS w_branch,
-                                    {$w_branch} * rg.r_score AS branch_ww,
-
-                                    {$w_dma} AS w_dma,
-                                    {$w_dma} * (
-                                        CASE
-                                        WHEN dma_nrw <= 30 THEN 1
-                                        WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
-                                        WHEN dma_nrw > 40 THEN 3
-                                        ELSE 0
-                                        END
-                                    ) AS dma_ww,
-
-                                    (
-                                        ({$w_leak} * (
-                                        CASE
-                                            WHEN SUM(c_leak) < {$leak_data['value_1']} THEN 1
-                                            WHEN SUM(c_leak) BETWEEN {$leak_data['value_1']} AND {$leak_data['value_2']} THEN 2
-                                            WHEN SUM(c_leak) > {$leak_data['value_2']} THEN 3
-                                        END
-                                        ))
-                                        +
-                                        ({$w_cost} * (
-                                        CASE
-                                            WHEN SUM(cost_repair) < {$cost_data['value_1']} THEN 1
-                                            WHEN SUM(cost_repair) BETWEEN {$cost_data['value_1']} AND {$cost_data['value_2']} THEN 2
-                                            WHEN SUM(cost_repair) > {$cost_data['value_2']} THEN 3
-                                            ELSE 0
-                                        END
-                                        ))
-                                        +
-                                        ({$w_age} * (
+                                        {$w_age} * (
                                         CASE
                                             WHEN pipe_age < {$age_data['value_1']} THEN 1
                                             WHEN pipe_age BETWEEN {$age_data['value_1']} AND {$age_data['value_2']} THEN 2
                                             WHEN pipe_age > {$age_data['value_2']} THEN 3
                                             ELSE 0
                                         END
-                                        ))
-                                        +
-                                        ({$w_ptype} * (
+                                        ) AS pipe_age_ww,
+
+                                        COUNT(pipe_id) AS c_pipe,
+                                        SUM(ST_Length(ps.wkb_geometry::geography)) AS l_pipe,
+                                        SUM(c_leak)  AS c_leak,
+
+                                        {$w_leak} AS w_leak,
+                                        {$w_leak} * (
+                                        CASE
+                                            WHEN SUM(c_leak) < {$leak_data['value_1']} THEN 1
+                                            WHEN SUM(c_leak) BETWEEN {$leak_data['value_1']} AND {$leak_data['value_2']} THEN 2
+                                            WHEN SUM(c_leak) > {$leak_data['value_2']} THEN 3
+                                        END
+                                        ) AS c_leak_ww,
+
+                                        SUM(cost_repair) AS cost_repair,
+
+                                        {$w_cost} AS w_cost,
+                                        {$w_cost} * (
+                                        CASE
+                                            WHEN SUM(cost_repair) < {$cost_data['value_1']} THEN 1
+                                            WHEN SUM(cost_repair) BETWEEN {$cost_data['value_1']} AND {$cost_data['value_2']} THEN 2
+                                            WHEN SUM(cost_repair) > {$cost_data['value_2']} THEN 3
+                                            ELSE 0
+                                        END
+                                        ) AS cost_repair_ww,
+
+                                        0 AS elev,
+                                        0 AS w_elev,
+                                        0 AS elev_ww,
+
+                                        0           AS ptype,
+                                        {$w_ptype}  AS w_ptype,
+                                        {$w_ptype} * (
                                         CASE
                                             WHEN pipe_type IN ('ST','ST_UN','ST_ON','ST_CV','GS','DI','CI') THEN 1
                                             WHEN pipe_type IN ('PVC','PVC_O','HDPE','PB')                    THEN 2
-                                            WHEN pipe_type IN ('GRP','AC')                                   THEN 3
+                                            WHEN pipe_type IN ('AC','GRP')                                   THEN 3
                                             ELSE 1
                                         END
-                                        ))
-                                        +
-                                        ({$w_branch} * rg.r_score + (0 * (
+                                        ) AS ptype_ww,
+
+                                        0 AS pressure,
+                                        0 AS w_pressure,
+                                        0 AS pressure_ww,
+
+                                        {$w_branch} AS w_branch,
+                                        {$w_branch} * rg.r_score AS branch_ww,
+
+                                        {$w_dma} AS w_dma,
+                                        {$w_dma} * (
                                         CASE
                                             WHEN dma_nrw <= 30 THEN 1
                                             WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
                                             WHEN dma_nrw > 40 THEN 3
                                             ELSE 0
                                         END
+                                        ) AS dma_ww,
+
+                                        (
+                                        ({$w_leak} * (
+                                            CASE
+                                            WHEN SUM(c_leak) < {$leak_data['value_1']} THEN 1
+                                            WHEN SUM(c_leak) BETWEEN {$leak_data['value_1']} AND {$leak_data['value_2']} THEN 2
+                                            WHEN SUM(c_leak) > {$leak_data['value_2']} THEN 3
+                                            END
+                                        ))
+                                        +
+                                        ({$w_cost} * (
+                                            CASE
+                                            WHEN SUM(cost_repair) < {$cost_data['value_1']} THEN 1
+                                            WHEN SUM(cost_repair) BETWEEN {$cost_data['value_1']} AND {$cost_data['value_2']} THEN 2
+                                            WHEN SUM(cost_repair) > {$cost_data['value_2']} THEN 3
+                                            ELSE 0
+                                            END
+                                        ))
+                                        +
+                                        ({$w_age} * (
+                                            CASE
+                                            WHEN pipe_age < {$age_data['value_1']} THEN 1
+                                            WHEN pipe_age BETWEEN {$age_data['value_1']} AND {$age_data['value_2']} THEN 2
+                                            WHEN pipe_age > {$age_data['value_2']} THEN 3
+                                            ELSE 0
+                                            END
+                                        ))
+                                        +
+                                        ({$w_ptype} * (
+                                            CASE
+                                            WHEN pipe_type IN ('ST','ST_UN','ST_ON','ST_CV','GS','DI','CI') THEN 1
+                                            WHEN pipe_type IN ('PVC','PVC_O','HDPE','PB')                    THEN 2
+                                            WHEN pipe_type IN ('GRP','AC')                                   THEN 3
+                                            ELSE 1
+                                            END
+                                        ))
+                                        +
+                                        ({$w_branch} * rg.r_score + (0 * (
+                                            CASE
+                                            WHEN dma_nrw <= 30 THEN 1
+                                            WHEN dma_nrw > 30 AND dma_nrw <= 40 THEN 2
+                                            WHEN dma_nrw > 40 THEN 3
+                                            ELSE 0
+                                            END
                                         )))
-                                    ) AS sum_ww
-                                FROM dssnrw.pipe_summary ps
-                                LEFT JOIN dssnrw.pwa_risk_group rg
-                                    ON ps.pwa_code = rg.pwa_code
-                                WHERE ps.pwa_code = '{$pwa_code}'
-                                GROUP BY
-                                    pipe_type, pipe_size, pipe_age,
-                                    rg.r_score, dma_nrw, dma_no, dma_name
-                                ),
-                                agg AS (
-                                SELECT
-                                    dma_no,
-                                    dma_name,
-                                    pipe_type,
-                                    pipe_size,
+                                        ) AS sum_ww
 
-                                    CASE WHEN SUM(l_pipe) <> 0
-                                        THEN ROUND(SUM(c_leak) / SUM(l_pipe), 2)
-                                        ELSE 0
-                                    END AS avg_lk,
+                                    FROM dssnrw.pipe_summary ps
+                                    LEFT JOIN dssnrw.pwa_risk_group rg
+                                        ON ps.pwa_code = rg.pwa_code
+                                    WHERE ps.pwa_code = '{$pwa_code}'
+                                    GROUP BY
+                                        pipe_type, pipe_size, pipe_age,
+                                        rg.r_score, dma_nrw, dma_no, dma_name
+                                    ),
+                                    agg AS (
+                                    SELECT
+                                        dma_no,
+                                        dma_name,
+                                        pipe_type,
+                                        pipe_size,
 
-                                    MAX(pipe_age)   AS age_max,
-                                    MIN(pipe_age)   AS age_min,
+                                        COALESCE(
+                                        ROUND( (SUM(c_leak)::numeric) / NULLIF(SUM(l_pipe)::numeric, 0), 2 ),
+                                        0
+                                        ) AS avg_lk,
 
-                                    MIN(w_age)          AS w_age,
-                                    MAX(pipe_age_ww)    AS pipe_age_ww,
+                                        MAX(pipe_age)   AS age_max,
+                                        MIN(pipe_age)   AS age_min,
 
-                                    SUM(c_pipe)         AS c_pipe,
-                                    SUM(l_pipe)         AS l_pipe,
-                                    SUM(c_leak)         AS c_leak,
+                                        MIN(w_age)          AS w_age,
+                                        MAX(pipe_age_ww)    AS pipe_age_ww,
 
-                                    MAX(w_leak)         AS w_leak,
-                                    MAX(c_leak_ww)      AS c_leak_ww,
+                                        SUM(c_pipe)         AS c_pipe,
+                                        SUM(l_pipe)         AS l_pipe,      
+                                        SUM(c_leak)         AS c_leak,
 
-                                    SUM(cost_repair)    AS cost_repair,
-                                    MAX(w_cost)         AS w_cost,
-                                    MAX(cost_repair_ww) AS cost_repair_ww,
+                                        MAX(w_leak)         AS w_leak,
+                                        MAX(c_leak_ww)      AS c_leak_ww,
 
-                                    MAX(elev)           AS elev,
-                                    MAX(w_elev)         AS w_elev,
-                                    MAX(elev_ww)        AS elev_ww,
+                                        SUM(cost_repair)    AS cost_repair,
+                                        MAX(w_cost)         AS w_cost,
+                                        MAX(cost_repair_ww) AS cost_repair_ww,
 
-                                    MAX(ptype)          AS ptype,
-                                    MAX(w_ptype)        AS w_ptype,
-                                    MAX(ptype_ww)       AS ptype_ww,
+                                        MAX(elev)           AS elev,
+                                        MAX(w_elev)         AS w_elev,
+                                        MAX(elev_ww)        AS elev_ww,
 
-                                    MAX(pressure)       AS pressure,
-                                    MAX(w_pressure)     AS w_pressure,
-                                    MAX(pressure_ww)    AS pressure_ww,
+                                        MAX(ptype)          AS ptype,
+                                        MAX(w_ptype)        AS w_ptype,
+                                        MAX(ptype_ww)       AS ptype_ww,
 
-                                    MAX(w_branch)       AS w_branch,
-                                    MAX(branch_ww)      AS branch_ww,
+                                        MAX(pressure)       AS pressure,
+                                        MAX(w_pressure)     AS w_pressure,
+                                        MAX(pressure_ww)    AS pressure_ww,
 
-                                    MAX(w_dma)          AS w_dma,
-                                    MAX(dma_ww)         AS dma_ww,
+                                        MAX(w_branch)       AS w_branch,
+                                        MAX(branch_ww)      AS branch_ww,
 
-                                    SUM(CASE WHEN sum_ww >= 0 AND sum_ww <= 1 THEN c_pipe ELSE 0 END) AS lr,
-                                    SUM(CASE WHEN sum_ww >= 0 AND sum_ww <= 1 THEN l_pipe ELSE 0 END) AS long_lr,
+                                        MAX(w_dma)          AS w_dma,
+                                        MAX(dma_ww)         AS dma_ww,
 
-                                    SUM(CASE WHEN sum_ww > 1 AND sum_ww <= 2 THEN c_pipe ELSE 0 END)  AS mr,
-                                    SUM(CASE WHEN sum_ww > 1 AND sum_ww <= 2 THEN l_pipe ELSE 0 END)  AS long_mr,
+                                        SUM(CASE WHEN sum_ww >= 0 AND sum_ww <= 1 THEN c_pipe ELSE 0 END) AS lr,
+                                        SUM(CASE WHEN sum_ww >= 0 AND sum_ww <= 1 THEN l_pipe ELSE 0 END) AS long_lr,
 
-                                    SUM(CASE WHEN sum_ww > 2 AND sum_ww <= 3 THEN c_pipe ELSE 0 END)  AS hr,
-                                    SUM(CASE WHEN sum_ww > 2 AND sum_ww <= 3 THEN l_pipe ELSE 0 END)  AS long_hr
-                                FROM pp
-                                GROUP BY
-                                    dma_no, dma_name, pipe_type, pipe_size
-                                )
-                                SELECT *
-                                FROM agg
-                                ORDER BY dma_no, dma_name, pipe_type, pipe_size;" ;
+                                        SUM(CASE WHEN sum_ww > 1 AND sum_ww <= 2 THEN c_pipe ELSE 0 END)  AS mr,
+                                        SUM(CASE WHEN sum_ww > 1 AND sum_ww <= 2 THEN l_pipe ELSE 0 END)  AS long_mr,
+
+                                        SUM(CASE WHEN sum_ww > 2 AND sum_ww <= 3 THEN c_pipe ELSE 0 END)  AS hr,
+                                        SUM(CASE WHEN sum_ww > 2 AND sum_ww <= 3 THEN l_pipe ELSE 0 END)  AS long_hr
+                                    FROM pp
+                                    GROUP BY
+                                        dma_no, dma_name, pipe_type, pipe_size
+                                    )
+                                    SELECT *
+                                    FROM agg
+                                    ORDER BY dma_no, dma_name, pipe_type, pipe_size;" ;
 
     //echo  $sqlPipetypesizefreq_dma;
     //exit();
@@ -1315,7 +1313,7 @@ if ($act == 'f_weight') {
                                                 w_age, pipe_age_ww, elev, w_elev, elev_ww, ptype, w_ptype, ptype_ww,
                                                 pressure, w_pressure, pressure_ww, w_branch, branch_ww, w_dma, dma_ww, 
                                                 sum_ww, pipe_long, project_no, contrac_date,   
-                                                asset_code, pipe_func, laying, product, depth, locate, dma_no, dma_name) As l 
+                                                asset_code, pipe_func, laying, product, depth, locate, dma_no, dma_name, dma_no_list, dma_name_list) As l 
                                 )) As properties 
                                 FROM (SELECT pipe_id, 
                                             CASE WHEN pipe_long != 0 THEN ROUND(c_leak/pipe_long,2) 
@@ -1387,7 +1385,7 @@ if ($act == 'f_weight') {
                                                 CASE WHEN project_no IS NULL THEN '' ELSE project_no END project_no, 
                                                 contrac_date, 
                                                 CASE WHEN asset_code IS NULL THEN '' ELSE asset_code END asset_code, 
-                                                pipe_func, laying, product, depth, locate, wkb_geometry, dma_no, dma_name  
+                                                pipe_func, laying, product, depth, locate, wkb_geometry, dma_no, dma_name, dma_no_list, dma_name_list  
                                         FROM dssnrw.pipe_summary ps 
                                         LEFT JOIN 
                                         (SELECT pwa_code, r_score FROM dssnrw.pwa_risk_group) rg 
@@ -1731,7 +1729,7 @@ if ($act == 'f_weight') {
                             ) sw  ";
 
     //echo $sqlGroupWeight_temp;
-    //exit();0
+    //exit();
 
 
 
