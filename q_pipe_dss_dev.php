@@ -299,10 +299,11 @@ if ($act == 'upload_excel') {
         }
 
         $pipeId = trim($row[$pipeIdIndex]);
+        $pipeIdClean = str_replace(',', '', $pipeId);
 
         // filter numeric 
-        if (is_numeric($pipeId)) {
-            $pipe_id_array[] = $pipeId;
+        if (is_numeric($pipeIdClean)) {
+            $pipe_id_array[] = $pipeIdClean;
         }
     }
 
